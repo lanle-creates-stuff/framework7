@@ -7,7 +7,7 @@
  *
  * Released under the MIT License
  *
- * Released on: March 19, 2018
+ * Released on: March 27, 2018
  */
 
 import { window, document } from 'ssr-window';
@@ -935,6 +935,7 @@ function Request(requestOptions) {
   }, globalsNoCallbacks);
 
   const options = Utils.extend({}, defaults, requestOptions);
+  let proceedRequest;
 
   // Function to run XHR callbacks and events
   function fireCallback(callbackName, ...data) {
@@ -948,12 +949,22 @@ function Request(requestOptions) {
       success (response, status, xhr),
       statusCode ()
     */
-    if (globals[callbackName]) globals[callbackName](...data);
-    if (options[callbackName]) options[callbackName](...data);
+    let globalCallbackValue;
+    let optionCallbackValue;
+    if (globals[callbackName]) {
+      globalCallbackValue = globals[callbackName](...data);
+    }
+    if (options[callbackName]) {
+      optionCallbackValue = options[callbackName](...data);
+    }
+    if (typeof globalCallbackValue !== 'boolean') globalCallbackValue = true;
+    if (typeof optionCallbackValue !== 'boolean') optionCallbackValue = true;
+    return (globalCallbackValue && optionCallbackValue);
   }
 
   // Before create callback
-  fireCallback('beforeCreate', options);
+  proceedRequest = fireCallback('beforeCreate', options);
+  if (proceedRequest === false) return undefined;
 
   // For jQuery guys
   if (options.type) options.method = options.type;
@@ -1038,7 +1049,8 @@ function Request(requestOptions) {
   xhr.requestParameters = options;
 
   // Before open callback
-  fireCallback('beforeOpen', xhr, options);
+  proceedRequest = fireCallback('beforeOpen', xhr, options);
+  if (proceedRequest === false) return xhr;
 
   // Open XHR
   xhr.open(method, options.url, options.async, options.user, options.password);
@@ -1148,7 +1160,8 @@ function Request(requestOptions) {
   }
 
   // Ajax start callback
-  fireCallback('beforeSend', xhr, options);
+  proceedRequest = fireCallback('beforeSend', xhr, options);
+  if (proceedRequest === false) return xhr;
 
   // Send XHR
   xhr.send(postData);
@@ -2900,6 +2913,10 @@ function SwipeBack(r) {
 function redirect (direction, route, options) {
   const router = this;
   const redirect = route.route.redirect;
+  if (options.initial && router.params.pushState) {
+    options.replaceState = true; // eslint-disable-line
+    options.history = true; // eslint-disable-line
+  }
   function redirectResolve(redirectUrl, redirectOptions = {}) {
     router.allowPageChange = true;
     router[direction](redirectUrl, Utils.extend({}, options, redirectOptions));
@@ -2935,6 +2952,7 @@ function forward(el, forwardOptions = {}) {
   const options = Utils.extend({
     animate: router.params.animate,
     pushState: true,
+    replaceState: false,
     history: true,
     reloadCurrent: router.params.reloadPages,
     reloadPrevious: false,
@@ -3069,9 +3087,9 @@ function forward(el, forwardOptions = {}) {
   }
 
   // Push State
-  if (router.params.pushState && options.pushState && !options.reloadPrevious) {
+  if (router.params.pushState && (options.pushState || options.replaceState) && !options.reloadPrevious) {
     const pushStateRoot = router.params.pushStateRoot || '';
-    History[options.reloadCurrent || options.reloadAll ? 'replace' : 'push'](
+    History[options.reloadCurrent || options.reloadAll || options.replaceState ? 'replace' : 'push'](
       view.id,
       {
         url: options.route.url,
@@ -3095,8 +3113,9 @@ function forward(el, forwardOptions = {}) {
 
   // Update router history
   const url = options.route.url;
+
   if (options.history) {
-    if (options.reloadCurrent && router.history.length > 0) {
+    if ((options.reloadCurrent && router.history.length) > 0 || options.replaceState) {
       router.history[router.history.length - (options.reloadPrevious ? 2 : 1)] = url;
     } else if (options.reloadPrevious) {
       router.history[router.history.length - 2] = url;
@@ -3672,13 +3691,18 @@ function tabLoad(tabRoute, loadOptions = {}) {
 }
 function tabRemove($oldTabEl, $newTabEl, tabRoute) {
   const router = this;
-  $oldTabEl.trigger('tab:beforeremove', tabRoute);
-  router.emit('tabBeforeRemove', $oldTabEl[0], $newTabEl[0], tabRoute);
+  let hasTabComponentChild;
   $oldTabEl.children().each((index, tabChild) => {
     if (tabChild.f7Component) {
+      hasTabComponentChild = true;
+      $(tabChild).trigger('tab:beforeremove', tabRoute);
       tabChild.f7Component.$destroy();
     }
   });
+  if (!hasTabComponentChild) {
+    $oldTabEl.trigger('tab:beforeremove', tabRoute);
+  }
+  router.emit('tabBeforeRemove', $oldTabEl[0], $newTabEl[0], tabRoute);
   router.removeTabContent($oldTabEl[0], tabRoute);
 }
 
@@ -4819,6 +4843,14 @@ class Router extends Framework7Class {
     if ($el[0].f7Component && $el[0].f7Component.$destroy) {
       $el[0].f7Component.$destroy();
     }
+    $el.find('.tab').each((tabIndex, tabEl) => {
+      $(tabEl).children().each((index, tabChild) => {
+        if (tabChild.f7Component) {
+          $(tabChild).trigger('tab:beforeremove');
+          tabChild.f7Component.$destroy();
+        }
+      });
+    });
     if (!router.params.removeElements) {
       return;
     }
@@ -5501,6 +5533,7 @@ class Router extends Framework7Class {
     if (router.$el.children('.page:not(.stacked)').length === 0 && initUrl) {
       // No pages presented in DOM, reload new page
       router.navigate(initUrl, {
+        initial: true,
         reloadCurrent: true,
         pushState: false,
       });
@@ -5544,6 +5577,7 @@ class Router extends Framework7Class {
       });
       if (historyRestored) {
         router.navigate(initUrl, {
+          initial: true,
           pushState: false,
           history: false,
           animate: router.params.pushStateAnimateOnLoad,
@@ -5793,7 +5827,7 @@ function initClicks(app) {
         view = $(clickedLinkData.view)[0].f7View;
       } else {
         view = clicked.parents('.view')[0] && clicked.parents('.view')[0].f7View;
-        if (view && view.params.linksView) {
+        if (!clickedLink.hasClass('back') && view && view.params.linksView) {
           if (typeof view.params.linksView === 'string') view = $(view.params.linksView)[0].f7View;
           else if (view.params.linksView instanceof View) view = view.params.linksView;
         }
@@ -6649,7 +6683,7 @@ const Toolbar = {
     let highlightWidth;
     let highlightTranslate;
 
-    if ($tabbarEl.hasClass('tabbar-scrollable')) {
+    if ($tabbarEl.hasClass('tabbar-scrollable') && $activeLink && $activeLink[0]) {
       highlightWidth = `${$activeLink[0].offsetWidth}px`;
       highlightTranslate = `${$activeLink[0].offsetLeft}px`;
     } else {
@@ -12169,9 +12203,15 @@ class Range extends Framework7Class {
     super(params, [app]);
     const range = this;
     const defaults = {
+      el: null,
+      inputEl: null,
       dual: false,
       step: 1,
       label: false,
+      min: 0,
+      max: 100,
+      value: 0,
+      draggableBar: true,
     };
 
     // Extend defaults with modules params
@@ -12305,6 +12345,11 @@ class Range extends Framework7Class {
     }
     function handleTouchStart(e) {
       if (isTouched) return;
+      if (!range.params.draggableBar) {
+        if ($(e.target).closest('.range-knob').length === 0) {
+          return;
+        }
+      }
       valueChangedByTouch = false;
       touchesStart.x = e.type === 'touchstart' ? e.targetTouches[0].pageX : e.pageX;
       touchesStart.y = e.type === 'touchstart' ? e.targetTouches[0].pageY : e.pageY;
@@ -12409,6 +12454,12 @@ class Range extends Framework7Class {
       app.on('touchend:passive', handleTouchEnd);
       app.on('tabShow', handleResize);
       app.on('resize', handleResize);
+      range.$el
+        .parents('.sheet-modal, .actions-modal, .popup, .popover, .login-screen, .dialog, .toast')
+        .on('modal:open', handleResize);
+      range.$el
+        .parents('.panel')
+        .on('panel:open', handleResize);
     };
     range.detachEvents = function detachEvents() {
       const passive = Support.passiveListener ? { passive: true } : false;
@@ -12417,6 +12468,12 @@ class Range extends Framework7Class {
       app.off('touchend:passive', handleTouchEnd);
       app.off('tabShow', handleResize);
       app.off('resize', handleResize);
+      range.$el
+        .parents('.sheet-modal, .actions-modal, .popup, .popover, .login-screen, .dialog, .toast')
+        .off('modal:open', handleResize);
+      range.$el
+        .parents('.panel')
+        .off('panel:open', handleResize);
     };
 
     // Install Modules
@@ -12616,6 +12673,9 @@ class Stepper extends Framework7Class {
       min: 0,
       max: 100,
       watchInput: true,
+      autorepeat: false,
+      autorepeatDynamic: false,
+      wraps: false,
     };
 
     // Extend defaults with modules params
@@ -12688,10 +12748,88 @@ class Stepper extends Framework7Class {
     $el[0].f7Stepper = stepper;
 
     // Handle Events
+    const touchesStart = {};
+    let isTouched;
+    let isScrolling;
+    let preventButtonClick;
+    let intervalId;
+    let timeoutId;
+    let autorepeatAction = null;
+    let autorepeatInAction = false;
+
+    function dynamicRepeat(current, progressions, startsIn, progressionStep, repeatEvery, action) {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        if (current === 1) {
+          preventButtonClick = true;
+          autorepeatInAction = true;
+        }
+        clearInterval(intervalId);
+        action();
+        intervalId = setInterval(() => {
+          action();
+        }, repeatEvery);
+        if (current < progressions) {
+          dynamicRepeat(current + 1, progressions, startsIn, progressionStep, repeatEvery / 2, action);
+        }
+      }, current === 1 ? startsIn : progressionStep);
+    }
+
+    function onTouchStart(e) {
+      if (isTouched) return;
+      if ($(e.target).closest($buttonPlusEl).length) {
+        autorepeatAction = 'increment';
+      } else if ($(e.target).closest($buttonMinusEl).length) {
+        autorepeatAction = 'decrement';
+      }
+      if (!autorepeatAction) return;
+
+      touchesStart.x = e.type === 'touchstart' ? e.targetTouches[0].pageX : e.pageX;
+      touchesStart.y = e.type === 'touchstart' ? e.targetTouches[0].pageY : e.pageY;
+      isTouched = true;
+      isScrolling = undefined;
+
+      const progressions = stepper.params.autorepeatDynamic ? 4 : 1;
+      dynamicRepeat(1, progressions, 500, 1000, 300, () => {
+        stepper[autorepeatAction]();
+      });
+    }
+    function onTouchMove(e) {
+      if (!isTouched) return;
+      const pageX = e.type === 'touchmove' ? e.targetTouches[0].pageX : e.pageX;
+      const pageY = e.type === 'touchmove' ? e.targetTouches[0].pageY : e.pageY;
+
+      if (typeof isScrolling === 'undefined' && !autorepeatInAction) {
+        isScrolling = !!(isScrolling || Math.abs(pageY - touchesStart.y) > Math.abs(pageX - touchesStart.x));
+      }
+      const distance = (((pageX - touchesStart.x) ** 2) + ((pageY - touchesStart.y) ** 2)) ** 0.5;
+
+      if (isScrolling || distance > 20) {
+        isTouched = false;
+        clearTimeout(timeoutId);
+        clearInterval(intervalId);
+      }
+    }
+    function onTouchEnd() {
+      clearTimeout(timeoutId);
+      clearInterval(intervalId);
+      autorepeatAction = null;
+      autorepeatInAction = false;
+      isTouched = false;
+    }
+
     function onMinusClick() {
+      if (preventButtonClick) {
+        preventButtonClick = false;
+        return;
+      }
       stepper.decrement();
     }
     function onPlusClick() {
+      if (preventButtonClick) {
+        preventButtonClick = false;
+        return;
+      }
       stepper.increment();
     }
     function onInput(e) {
@@ -12703,6 +12841,11 @@ class Stepper extends Framework7Class {
       $buttonPlusEl.on('click', onPlusClick);
       if (stepper.params.watchInput && $inputEl && $inputEl.length) {
         $inputEl.on('input', onInput);
+      }
+      if (stepper.params.autorepeat) {
+        app.on('touchstart:passive', onTouchStart);
+        app.on('touchmove:active', onTouchMove);
+        app.on('touchend:passive', onTouchEnd);
       }
     };
     stepper.detachEvents = function detachEvents() {
@@ -12740,7 +12883,14 @@ class Stepper extends Framework7Class {
     const { step, min, max } = stepper;
 
     const oldValue = stepper.value;
-    let value = Math.max(Math.min(Math.round(newValue / step) * step, max), min);
+
+    let value = Math.round(newValue / step) * step;
+    if (!stepper.params.wraps) {
+      value = Math.max(Math.min(value, max), min);
+    } else {
+      if (value > max) value = min;
+      if (value < min) value = max;
+    }
     if (Number.isNaN(value)) {
       value = oldValue;
     }
@@ -13871,6 +14021,19 @@ class Calendar extends Framework7Class {
 
     return calendar;
   }
+  // eslint-disable-next-line
+  normalizeDate(date) {
+    const d = new Date(date);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+  normalizeValues(values) {
+    const calendar = this;
+    let newValues = [];
+    if (values && Array.isArray(values)) {
+      newValues = values.map(val => calendar.normalizeDate(val));
+    }
+    return newValues;
+  }
   initInput() {
     const calendar = this;
     if (!calendar.$inputEl) return;
@@ -14719,7 +14882,7 @@ class Calendar extends Framework7Class {
     if (!initialized) {
       if (value) calendar.setValue(value, 0);
       else if (params.value) {
-        calendar.setValue(params.value, 0);
+        calendar.setValue(calendar.normalizeValues(params.value), 0);
       }
     } else if (value) {
       calendar.setValue(value, 0);
@@ -14893,7 +15056,7 @@ class Calendar extends Framework7Class {
     }
 
     if (!calendar.initialized && calendar.params.value) {
-      calendar.setValue(calendar.params.value);
+      calendar.setValue(calendar.normalizeValues(calendar.params.value));
     }
 
     // Attach input Events
@@ -25113,7 +25276,7 @@ class Autocomplete extends Framework7Class {
       }
       if (ac.params.openIn === 'dropdown' && ac.$inputEl) {
         ac.$inputEl.on('focus', onInputFocus);
-        ac.$inputEl.on('input', onInputChange);
+        ac.$inputEl.on(ac.params.inputEvents, onInputChange);
         if (app.device.android) {
           $('html').on('click', onHtmlClick);
         } else {
@@ -25130,7 +25293,7 @@ class Autocomplete extends Framework7Class {
       }
       if (ac.params.openIn === 'dropdown' && ac.$inputEl) {
         ac.$inputEl.off('focus', onInputFocus);
-        ac.$inputEl.off('input', onInputChange);
+        ac.$inputEl.off(ac.params.inputEvents, onInputChange);
         if (app.device.android) {
           $('html').off('click', onHtmlClick);
         } else {
@@ -25666,6 +25829,7 @@ var Autocomplete$1 = {
       highlightMatches: true,
       expandInput: false,
       updateInputValueOnSelect: true,
+      inputEvents: 'input',
 
       value: undefined,
       multiple: false,

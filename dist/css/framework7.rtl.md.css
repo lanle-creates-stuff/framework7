@@ -7,7 +7,7 @@
  *
  * Released under the MIT License
  *
- * Released on: March 19, 2018
+ * Released on: March 27, 2018
  */
 html {
   direction: rtl;
@@ -4753,7 +4753,7 @@ html.with-statusbar.md:not(.device-ios):not(.device-android) .login-screen {
 .md .sheet-modal .toolbar + .sheet-modal-inner {
   height: calc(100% - 48px);
 }
-.md .sheet-modal .toolbar a.link {
+.md .sheet-modal .toolbar a.link:not(.tab-link) {
   -webkit-flex-shrink: 0;
   -ms-flex-negative: 0;
   flex-shrink: 0;
@@ -5989,7 +5989,7 @@ html.with-statusbar.md:not(.device-ios):not(.device-android) .framework7-root > 
 }
 .sortable-enabled .item-link .item-inner,
 .sortable-enabled .item-link .item-title-row {
-  background-image: none;
+  background-image: none !important;
 }
 .theme-dark .sortable li.sorting,
 .sortable.theme-dark li.sorting {
@@ -6004,6 +6004,12 @@ html.with-statusbar.md:not(.device-ios):not(.device-android) .framework7-root > 
 }
 .md .sortable-enabled .item-inner,
 .md .sortable-enabled .item-link .item-inner {
+  padding-left: 50px;
+}
+.md .list.sortable-enabled .item-link.no-chevron .item-inner,
+.md .list.sortable-enabled.no-chevron .item-link .item-inner,
+.md .list.sortable-enabled .no-chevron .item-link .item-inner,
+.md .no-chevron .list.sortable-enabled .item-link .item-inner {
   padding-left: 50px;
 }
 /* === Swipeout === */
@@ -9593,6 +9599,13 @@ label.item-radio.disabled,
   -ms-flex-negative: 1;
   flex-shrink: 1;
   text-align: center;
+}
+.stepper-button-plus,
+.stepper-button-minus {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
 }
 .stepper-button-plus:after,
 .stepper-button-minus:after,
